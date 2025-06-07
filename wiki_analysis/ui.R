@@ -9,9 +9,12 @@ shinyUI(fluidPage(
       p("Explore Wikipedia's hyperlink network using community detection."),
       p("We apply the Louvain algorithm to reveal clusters of related articles."),
       selectInput("top_n_nodes", "Number of nodes to visualize:",
-                  choices = c(100, 200, 300, 500), selected = 200)
+                  choices = c(100, 200, 300, 500), selected = 200),
+      selectInput("comm_algo", "Community Detection Method:",
+                  choices = c("Louvain", "Infomap", "Edge Betweenness"),
+                  selected = "Louvain")
     ),
-    
+      
     mainPanel(
       tabsetPanel(
         tabPanel("Network Visualization", 
