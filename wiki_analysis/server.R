@@ -6,7 +6,7 @@ library(ggraph)
 library(tidygraph)
 library(utils)
 
-# --- Load and clean base data ---
+# --- Load and prepare data ---
 links <- read_tsv("network_data/wikispeedia_paths-and-graph/links.tsv", comment = "#", col_names = FALSE)
 colnames(links) <- c("from", "to")
 links <- links %>% filter(!is.na(from), !is.na(to))
@@ -15,56 +15,45 @@ articles <- read_tsv("network_data/wikispeedia_paths-and-graph/articles.tsv", co
 colnames(articles) <- c("url_title")
 articles$title <- URLdecode(articles$url_title)
 
-categories <- read_tsv("network_data/wikispeedia_paths-and-graph/categories.tsv", comment ="#", col_names = FALSE)
+categories <- read_tsv("network_data/wikispeedia_paths-and-graph/categories.tsv", comment = "#", col_names = FALSE)
 colnames(categories) <- c("url_title", "category")
 categories$title <- URLdecode(categories$url_title)
 categories$category <- gsub("^subject\\.", "", categories$category)
 categories$category <- gsub("[._]", " ", categories$category)
 
-# --- Create graph ---
 g <- graph_from_data_frame(links, directed = FALSE)
 g <- simplify(g, remove.multiple = TRUE, remove.loops = TRUE)
 
-# --- Shiny Server Function ---
+# --- Shiny Server ---
 shinyServer(function(input, output) {
   
-  # Reactive: Top N node subgraph
   filtered_graph <- reactive({
     top_n <- input$top_n_nodes
     top_nodes <- names(sort(degree(g), decreasing = TRUE))[1:top_n]
     induced_subgraph(g, vids = top_nodes)
   })
   
-  # --- Plot Output ---
   output$networkPlot <- renderPlot({
-    set.seed(1234) 
-    
+    set.seed(1234)
     subgraph <- filtered_graph()
     
-    # Apply selected community detection algorithm
+    # Apply algorithm
     algo <- input$comm_algo
-    if (algo == "Louvain") {
-      community_struct <- cluster_louvain(subgraph)
-    } else if (algo == "Infomap") {
-      community_struct <- cluster_infomap(subgraph)
-    } else if (algo == "Edge Betweenness") {
-      community_struct <- cluster_edge_betweenness(subgraph)
-    }
+    community_struct <- switch(algo,
+                               "Louvain" = cluster_louvain(subgraph),
+                               "Infomap" = cluster_infomap(subgraph),
+                               "Edge Betweenness" = cluster_edge_betweenness(subgraph))
     
     V(subgraph)$community <- membership(community_struct)
     g_tbl <- as_tbl_graph(subgraph)
     
-    # Node info
     node_df <- data.frame(
       name = V(subgraph)$name,
       community = V(subgraph)$community
     )
     node_df$title <- URLdecode(node_df$name)
     
-    # Join with categories
     node_cat <- left_join(node_df, categories, by = "title")
-    
-    # Determine top category per community
     community_labels <- node_cat %>%
       group_by(community, category) %>%
       summarise(count = n(), .groups = "drop") %>%
@@ -76,7 +65,6 @@ shinyServer(function(input, output) {
     node_df <- left_join(node_df, community_labels, by = "community")
     node_df$category <- ifelse(is.na(node_df$category), "Unlabeled", node_df$category)
     
-    # Limit categories to top 10 (group rest as "Other")
     top_cats <- node_df %>%
       count(category) %>%
       arrange(desc(n)) %>%
@@ -85,21 +73,17 @@ shinyServer(function(input, output) {
     
     node_df$category <- ifelse(node_df$category %in% top_cats, node_df$category, "Other")
     
-    # Inject into graph
     g_tbl <- g_tbl %>%
       activate(nodes) %>%
       mutate(community_label = node_df$category)
     
-    # Largest community info
     top_comm <- node_df %>%
       count(category, name = "Nodes") %>%
       arrange(desc(Nodes)) %>%
       slice(1)
     
-    total_nodes <- nrow(node_df)
-    legend_text <- paste0("Total nodes: ", total_nodes,
-                          " — Largest community: ", top_comm$category,
-                          " (", top_comm$Nodes, " nodes)")
+    legend_text <- paste0("Top ", input$top_n_nodes, " nodes — Largest community: ",
+                          top_comm$category, " (", top_comm$Nodes, " nodes)")
     
     ggraph(g_tbl, layout = "lgl") +
       geom_edge_link(alpha = 0.05) +
@@ -113,34 +97,20 @@ shinyServer(function(input, output) {
         plot.subtitle = element_text(size = 12)
       ) +
       labs(
-        title = paste("Top", input$top_n_nodes, "Wikispeedia Nodes by Category"),
+        title = paste("Wikispeedia Article Clusters by", algo),
         subtitle = legend_text,
-        color = "Community Label"
+        color = "Dominant Category"
       ) +
-      guides(
-        color = guide_legend(
-          override.aes = list(size = 5),
-          title.position = "top",
-          title.hjust = 0.5,
-          ncol = 1
-        )
-      )
+      guides(color = guide_legend(override.aes = list(size = 5)))
   })
   
-  
-  # --- Table Output ---
   output$communityTable <- renderTable({
     subgraph <- filtered_graph()
-    
-    # Apply selected community detection algorithm
     algo <- input$comm_algo
-    if (algo == "Louvain") {
-      community_struct <- cluster_louvain(subgraph)
-    } else if (algo == "Infomap") {
-      community_struct <- cluster_infomap(subgraph)
-    } else if (algo == "Edge Betweenness") {
-      community_struct <- cluster_edge_betweenness(subgraph)
-    }
+    community_struct <- switch(algo,
+                               "Louvain" = cluster_louvain(subgraph),
+                               "Infomap" = cluster_infomap(subgraph),
+                               "Edge Betweenness" = cluster_edge_betweenness(subgraph))
     
     V(subgraph)$community <- membership(community_struct)
     
@@ -151,12 +121,21 @@ shinyServer(function(input, output) {
     node_df$title <- URLdecode(node_df$name)
     node_df <- left_join(node_df, categories, by = "title")
     
-    # Count articles per community label
     node_df %>%
       group_by(community) %>%
       count(category, name = "Articles") %>%
       arrange(community, desc(Articles)) %>%
       slice_head(n = 1) %>%
       ungroup()
+  })
+  
+  output$codeChunk <- renderPrint({
+    cat("## Libraries and Setup Code\n")
+    cat("library(igraph)\nlibrary(readr)\nlibrary(ggraph)\nlibrary(tidygraph)\n\n")
+    cat("## Data Files Used:\n")
+    cat("• links.tsv — edges between articles\n")
+    cat("• articles.tsv — article titles\n")
+    cat("• categories.tsv — article categories\n")
+    cat("\nSource: https://snap.stanford.edu/data/wikispeedia.html\n")
   })
 })
