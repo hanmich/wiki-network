@@ -18,6 +18,8 @@ articles$title <- URLdecode(articles$url_title)
 categories <- read_tsv("network_data/wikispeedia_paths-and-graph/categories.tsv", comment = "#", col_names = FALSE)
 colnames(categories) <- c("url_title", "category")
 categories$title <- URLdecode(categories$url_title)
+categories$category <- gsub("^subject\\.", "", categories$category)
+categories$category <- gsub("[._]", " ", categories$category)
 
 # --- Create graph ---
 g <- graph_from_data_frame(links, directed = FALSE)
@@ -76,7 +78,13 @@ shinyServer(function(input, output) {
       arrange(desc(Nodes)) %>%
       slice(1)
     
-    legend_text <- paste0("Largest community: ", top_comm$category, " (", top_comm$Nodes, " nodes)")
+    total_nodes <- nrow(node_df)
+    legend_text <- paste0(
+      "Total nodes: ", total_nodes,
+      " — Largest community: ", top_comm$category,
+      " (", top_comm$Nodes, " nodes)"
+    )
+    
     
     # Render network plot
     ggraph(g_tbl, layout = "lgl") +
