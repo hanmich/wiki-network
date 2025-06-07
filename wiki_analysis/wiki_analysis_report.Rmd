@@ -4,9 +4,11 @@ author: "Michael Han"
 date: "2025-06-06"
 output: 
   html_document:
+    theme: cosmo
+    highlight: tango
     toc: true
-    toc_depth: 2
     toc_float: true
+    code_folding: show
 ---
 
 ## Narrative Summary 
